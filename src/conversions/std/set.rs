@@ -100,8 +100,13 @@ where
     K: FromPyObject<'source> + cmp::Ord,
 {
     fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        let set: &PySet = ob.downcast()?;
-        set.iter().map(K::extract).collect()
+        ob.downcast::<PyFrozenSet>()
+            .map_err(|e| e.into())
+            .and_then(|frozenset| frozenset.iter().map(K::extract).collect())
+            .or_else(|_| {
+                let set: &PySet = ob.downcast()?;
+                set.iter().map(K::extract).collect()
+            })
     }
 
     fn type_input() -> TypeInfo {
