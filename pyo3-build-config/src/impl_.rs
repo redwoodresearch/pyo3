@@ -1689,7 +1689,7 @@ pub fn find_interpreter() -> Result<PathBuf> {
     } else if let Some(env_interpreter) = get_env_interpreter() {
         Ok(env_interpreter)
     } else {
-        println!("cargo:rerun-if-env-changed=PATH");
+        // println!("cargo:rerun-if-env-changed=PATH");
         ["python", "python3"]
             .iter()
             .find(|bin| {
