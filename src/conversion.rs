@@ -763,3 +763,9 @@ where
         Ok(vec_version.into_iter().collect())
     }
 }
+
+impl<T: IntoPy<PyObject> + Clone> IntoPy<PyObject> for Box<T> {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        (*self).clone().into_py(py)
+    }
+}
