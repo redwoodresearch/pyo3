@@ -463,6 +463,7 @@ macro_rules! python_println{
 use regex::Regex;
 use std::any::Any;
 use std::backtrace::Backtrace;
+use std::thread;
 fn exception_filter_out_python_stuff(string: &str) -> String {
     let re = Regex::new(r"rust_circuit").unwrap();
     // println!("orig string {}", string);
@@ -490,21 +491,30 @@ pub fn catch_unwind_filtered<F, R>(f: F) -> std::thread::Result<R>
 where
     F: FnOnce() -> R + ::std::panic::UnwindSafe,
 {
-    let prev_hook = ::std::panic::take_hook();
-    if std::env::var("PYO3_NO_TRACEBACK_FILTER").is_err() {
-        ::std::panic::set_hook(Box::new(|panic_info| {
-            let bt = Backtrace::force_capture();
-            // should be eprintln but using python_println for jupyter issue
-            python_println!(
-                "panicked at '{}', {}\n{}",
-                &string_from_panic_payload(panic_info.payload()),
-                panic_info.location().unwrap(),
-                exception_filter_out_python_stuff(&bt.to_string())
-            )
-        }));
+    let panicing = thread::panicking();
+    let prev_hook = if !panicing {
+        Some(::std::panic::take_hook())
+    } else {
+        None
+    };
+    if !panicing {
+        if std::env::var("PYO3_NO_TRACEBACK_FILTER").is_err() {
+            ::std::panic::set_hook(Box::new(|panic_info| {
+                let bt = Backtrace::force_capture();
+                // should be eprintln but using python_println for jupyter issue
+                python_println!(
+                    "panicked at '{}', {}\n{}",
+                    &string_from_panic_payload(panic_info.payload()),
+                    panic_info.location().unwrap(),
+                    exception_filter_out_python_stuff(&bt.to_string())
+                )
+            }));
+        }
     }
     let result = ::std::panic::catch_unwind(f);
-    ::std::panic::set_hook(prev_hook);
+    if let Some(h) = prev_hook {
+        ::std::panic::set_hook(h);
+    }
     result
 }
 
