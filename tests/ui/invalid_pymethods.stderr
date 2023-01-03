@@ -34,99 +34,129 @@ error: expected receiver for #[setter]
 45 |     fn setter_without_receiver() {}
    |     ^^
 
-error: text_signature not allowed on __new__; if you want to add a signature on __new__, put it on the struct definition instead
+error: `text_signature` not allowed on `__new__`; if you want to add a signature on `__new__`, put it on the struct definition instead
   --> tests/ui/invalid_pymethods.rs:51:12
    |
 51 |     #[pyo3(text_signature = "()")]
    |            ^^^^^^^^^^^^^^
 
-error: `text_signature` cannot be used with `__call__`
-  --> tests/ui/invalid_pymethods.rs:57:12
+error: static method needs #[staticmethod] attribute
+  --> tests/ui/invalid_pymethods.rs:58:5
    |
-57 |     #[pyo3(text_signature = "()")]
-   |            ^^^^^^^^^^^^^^
+58 |     fn text_signature_on_call() {}
+   |     ^^
 
-error: text_signature not allowed with this method type
+error: `text_signature` not allowed with `getter`
   --> tests/ui/invalid_pymethods.rs:64:12
    |
 64 |     #[pyo3(text_signature = "()")]
    |            ^^^^^^^^^^^^^^
 
-error: text_signature not allowed with this method type
+error: `text_signature` not allowed with `setter`
   --> tests/ui/invalid_pymethods.rs:71:12
    |
 71 |     #[pyo3(text_signature = "()")]
    |            ^^^^^^^^^^^^^^
 
-error: text_signature not allowed with this method type
+error: `text_signature` not allowed with `classattr`
   --> tests/ui/invalid_pymethods.rs:78:12
    |
 78 |     #[pyo3(text_signature = "()")]
    |            ^^^^^^^^^^^^^^
 
-error: cannot specify a second method type
-  --> tests/ui/invalid_pymethods.rs:85:7
+error: expected a string literal or `None`
+  --> tests/ui/invalid_pymethods.rs:84:30
    |
-85 |     #[staticmethod]
-   |       ^^^^^^^^^^^^
+84 |     #[pyo3(text_signature = 1)]
+   |                              ^
+
+error: `text_signature` may only be specified once
+  --> tests/ui/invalid_pymethods.rs:91:12
+   |
+91 |     #[pyo3(text_signature = None)]
+   |            ^^^^^^^^^^^^^^
+
+error: `signature` not allowed with `getter`
+  --> tests/ui/invalid_pymethods.rs:98:12
+   |
+98 |     #[pyo3(signature = ())]
+   |            ^^^^^^^^^
+
+error: `signature` not allowed with `setter`
+   --> tests/ui/invalid_pymethods.rs:105:12
+    |
+105 |     #[pyo3(signature = ())]
+    |            ^^^^^^^^^
+
+error: `signature` not allowed with `classattr`
+   --> tests/ui/invalid_pymethods.rs:112:12
+    |
+112 |     #[pyo3(signature = ())]
+    |            ^^^^^^^^^
+
+error: cannot specify a second method type
+   --> tests/ui/invalid_pymethods.rs:119:7
+    |
+119 |     #[staticmethod]
+    |       ^^^^^^^^^^^^
 
 error: Python functions cannot have generic type parameters
-  --> tests/ui/invalid_pymethods.rs:91:23
-   |
-91 |     fn generic_method<T>(value: T) {}
-   |                       ^
-
-error: Python functions cannot have `impl Trait` arguments
-  --> tests/ui/invalid_pymethods.rs:97:48
-   |
-97 |     fn impl_trait_method_first_arg(impl_trait: impl AsRef<PyAny>) {}
-   |                                                ^^^^
-
-error: Python functions cannot have `impl Trait` arguments
-   --> tests/ui/invalid_pymethods.rs:102:56
+   --> tests/ui/invalid_pymethods.rs:125:23
     |
-102 |     fn impl_trait_method_second_arg(&self, impl_trait: impl AsRef<PyAny>) {}
+125 |     fn generic_method<T>(value: T) {}
+    |                       ^
+
+error: Python functions cannot have `impl Trait` arguments
+   --> tests/ui/invalid_pymethods.rs:130:48
+    |
+130 |     fn impl_trait_method_first_arg(impl_trait: impl AsRef<PyAny>) {}
+    |                                                ^^^^
+
+error: Python functions cannot have `impl Trait` arguments
+   --> tests/ui/invalid_pymethods.rs:135:56
+    |
+135 |     fn impl_trait_method_second_arg(&self, impl_trait: impl AsRef<PyAny>) {}
     |                                                        ^^^^
 
 error: `async fn` is not yet supported for Python functions.
 
        Additional crates such as `pyo3-asyncio` can be used to integrate async Rust and Python. For more information, see https://github.com/PyO3/pyo3/issues/1632
-   --> tests/ui/invalid_pymethods.rs:107:5
+   --> tests/ui/invalid_pymethods.rs:140:5
     |
-107 |     async fn async_method(&self) {}
+140 |     async fn async_method(&self) {}
     |     ^^^^^
 
 error: `pass_module` cannot be used on Python methods
-   --> tests/ui/invalid_pymethods.rs:112:12
+   --> tests/ui/invalid_pymethods.rs:145:12
     |
-112 |     #[pyo3(pass_module)]
+145 |     #[pyo3(pass_module)]
     |            ^^^^^^^^^^^
 
 error: Python objects are shared, so 'self' cannot be moved out of the Python interpreter.
        Try `&self`, `&mut self, `slf: PyRef<'_, Self>` or `slf: PyRefMut<'_, Self>`.
-   --> tests/ui/invalid_pymethods.rs:124:29
+   --> tests/ui/invalid_pymethods.rs:151:29
     |
-124 |     fn method_self_by_value(self){}
+151 |     fn method_self_by_value(self) {}
     |                             ^^^^
 
-error[E0201]: duplicate definitions with name `__pymethod___new____`:
-   --> tests/ui/invalid_pymethods.rs:129:1
+error[E0592]: duplicate definitions with name `__pymethod___new____`
+   --> tests/ui/invalid_pymethods.rs:156:1
     |
-129 | #[pymethods]
+156 | #[pymethods]
     | ^^^^^^^^^^^^
     | |
-    | previous definition of `__pymethod___new____` here
-    | duplicate definition
+    | duplicate definitions for `__pymethod___new____`
+    | other definition for `__pymethod___new____`
     |
     = note: this error originates in the attribute macro `pymethods` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0201]: duplicate definitions with name `__pymethod_func__`:
-   --> tests/ui/invalid_pymethods.rs:140:1
+error[E0592]: duplicate definitions with name `__pymethod_func__`
+   --> tests/ui/invalid_pymethods.rs:171:1
     |
-140 | #[pymethods]
+171 | #[pymethods]
     | ^^^^^^^^^^^^
     | |
-    | previous definition of `__pymethod_func__` here
-    | duplicate definition
+    | duplicate definitions for `__pymethod_func__`
+    | other definition for `__pymethod_func__`
     |
     = note: this error originates in the attribute macro `pymethods` (in Nightly builds, run with -Z macro-backtrace for more info)

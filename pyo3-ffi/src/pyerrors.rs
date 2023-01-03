@@ -85,18 +85,17 @@ pub unsafe fn PyUnicodeDecodeError_Create(
     length: Py_ssize_t,
     start: Py_ssize_t,
     end: Py_ssize_t,
-    _reason: *const c_char,
+    reason: *const c_char,
 ) -> *mut PyObject {
     crate::PyObject_CallFunction(
         PyExc_UnicodeDecodeError,
-        std::ffi::CStr::from_bytes_with_nul(b"sy#nns\0")
-            .unwrap()
-            .as_ptr(),
+        b"sy#nns\0".as_ptr().cast::<c_char>(),
         encoding,
         object,
         length,
         start,
         end,
+        reason,
     )
 }
 
@@ -245,6 +244,8 @@ extern "C" {
     pub static mut PyExc_BytesWarning: *mut PyObject;
     #[cfg_attr(PyPy, link_name = "PyPyExc_ResourceWarning")]
     pub static mut PyExc_ResourceWarning: *mut PyObject;
+    #[cfg(Py_3_10)]
+    pub static mut PyExc_EncodingWarning: *mut PyObject;
 }
 
 extern "C" {

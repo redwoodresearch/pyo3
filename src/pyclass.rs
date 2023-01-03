@@ -158,7 +158,12 @@ impl PyTypeBuilder {
             }
             PyMethodDefType::Method(def)
             | PyMethodDefType::Class(def)
-            | PyMethodDefType::Static(def) => self.method_defs.push(def.as_method_def().unwrap()),
+            | PyMethodDefType::Static(def) => {
+                let (def, destructor) = def.as_method_def().unwrap();
+                // FIXME: stop leaking destructor
+                std::mem::forget(destructor);
+                self.method_defs.push(def);
+            }
             // These class attributes are added after the type gets created by LazyStaticType
             PyMethodDefType::ClassAttribute(_) => {}
         }
@@ -475,7 +480,7 @@ impl CompareOp {
     ///
     /// #[pyclass]
     /// struct Size {
-    ///     size: usize
+    ///     size: usize,
     /// }
     ///
     /// #[pymethods]
@@ -600,8 +605,8 @@ pub(crate) unsafe extern "C" fn no_constructor_defined(
     _args: *mut ffi::PyObject,
     _kwds: *mut ffi::PyObject,
 ) -> *mut ffi::PyObject {
-    crate::callback_body!(py, {
-        Err::<(), _>(crate::exceptions::PyTypeError::new_err(
+    crate::impl_::trampoline::trampoline_inner(|_| {
+        Err(crate::exceptions::PyTypeError::new_err(
             "No constructor defined",
         ))
     })

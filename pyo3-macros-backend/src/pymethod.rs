@@ -196,7 +196,7 @@ pub fn gen_py_method(
             GeneratedPyMethod::Method(impl_py_class_attribute(cls, spec)?)
         }
         (PyMethodKind::Proto(proto_kind), _) => {
-            ensure_no_forbidden_protocol_attributes(spec, &method.method_name)?;
+            ensure_no_forbidden_protocol_attributes(&proto_kind, spec, &method.method_name)?;
             match proto_kind {
                 PyMethodProtoKind::Slot(slot_def) => {
                     let slot = slot_def.generate_type_slot(cls, spec, &method.method_name)?;
@@ -206,7 +206,7 @@ pub fn gen_py_method(
                     GeneratedPyMethod::Proto(impl_call_slot(cls, method.spec)?)
                 }
                 PyMethodProtoKind::Traverse => {
-                    GeneratedPyMethod::Proto(impl_traverse_slot(cls, method.spec))
+                    GeneratedPyMethod::Proto(impl_traverse_slot(cls, &spec.name))
                 }
                 PyMethodProtoKind::SlotFragment(slot_fragment_def) => {
                     let proto = slot_fragment_def.generate_pyproto_fragment(cls, spec)?;
@@ -263,11 +263,18 @@ fn ensure_function_options_valid(options: &PyFunctionOptions) -> syn::Result<()>
 }
 
 fn ensure_no_forbidden_protocol_attributes(
+    proto_kind: &PyMethodProtoKind,
     spec: &FnSpec<'_>,
     method_name: &str,
 ) -> syn::Result<()> {
+    if let Some(signature) = &spec.signature.attribute {
+        // __call__ is allowed to have a signature, but nothing else is.
+        if !matches!(proto_kind, PyMethodProtoKind::Call) {
+            bail_spanned!(signature.kw.span() => format!("`signature` cannot be used with magic method `{}`", method_name));
+        }
+    }
     if let Some(text_signature) = &spec.text_signature {
-        bail_spanned!(text_signature.kw.span() => format!("`text_signature` cannot be used with `{}`", method_name));
+        bail_spanned!(text_signature.kw.span() => format!("`text_signature` cannot be used with magic method `{}`", method_name));
     }
     Ok(())
 }
@@ -302,7 +309,22 @@ fn impl_py_method_def_new(cls: &syn::Type, spec: &FnSpec<'_>) -> Result<MethodAn
     let slot_def = quote! {
         _pyo3::ffi::PyType_Slot {
             slot: _pyo3::ffi::Py_tp_new,
-            pfunc: #cls::#wrapper_ident as _pyo3::ffi::newfunc as _
+            pfunc: {
+                unsafe extern "C" fn trampoline(
+                    subtype: *mut _pyo3::ffi::PyTypeObject,
+                    args: *mut _pyo3::ffi::PyObject,
+                    kwargs: *mut _pyo3::ffi::PyObject,
+                ) -> *mut _pyo3::ffi::PyObject
+                {
+                    _pyo3::impl_::trampoline::newfunc(
+                        subtype,
+                        args,
+                        kwargs,
+                        #cls::#wrapper_ident
+                    )
+                }
+                trampoline
+            } as _pyo3::ffi::newfunc as _
         }
     };
     Ok(MethodAndSlotDef {
@@ -321,7 +343,22 @@ fn impl_call_slot(cls: &syn::Type, mut spec: FnSpec<'_>) -> Result<MethodAndSlot
     let slot_def = quote! {
         _pyo3::ffi::PyType_Slot {
             slot: _pyo3::ffi::Py_tp_call,
-            pfunc: #cls::#wrapper_ident as _pyo3::ffi::ternaryfunc as _
+            pfunc: {
+                unsafe extern "C" fn trampoline(
+                    slf: *mut _pyo3::ffi::PyObject,
+                    args: *mut _pyo3::ffi::PyObject,
+                    kwargs: *mut _pyo3::ffi::PyObject,
+                ) -> *mut _pyo3::ffi::PyObject
+                {
+                    _pyo3::impl_::trampoline::ternaryfunc(
+                        slf,
+                        args,
+                        kwargs,
+                        #cls::#wrapper_ident
+                    )
+                }
+                trampoline
+            } as _pyo3::ffi::ternaryfunc as _
         }
     };
     Ok(MethodAndSlotDef {
@@ -330,8 +367,7 @@ fn impl_call_slot(cls: &syn::Type, mut spec: FnSpec<'_>) -> Result<MethodAndSlot
     })
 }
 
-fn impl_traverse_slot(cls: &syn::Type, spec: FnSpec<'_>) -> MethodAndSlotDef {
-    let ident = spec.name;
+fn impl_traverse_slot(cls: &syn::Type, rust_fn_ident: &syn::Ident) -> MethodAndSlotDef {
     let associated_method = quote! {
         pub unsafe extern "C" fn __pymethod_traverse__(
             slf: *mut _pyo3::ffi::PyObject,
@@ -347,7 +383,7 @@ fn impl_traverse_slot(cls: &syn::Type, spec: FnSpec<'_>) -> MethodAndSlotDef {
             let visit = _pyo3::class::gc::PyVisit::from_raw(visit, arg, py);
             let borrow = slf.try_borrow();
             let retval = if let ::std::result::Result::Ok(borrow) = borrow {
-                _pyo3::impl_::pymethods::unwrap_traverse_result(borrow.#ident(visit))
+                _pyo3::impl_::pymethods::unwrap_traverse_result(borrow.#rust_fn_ident(visit))
             } else {
                 0
             };
@@ -368,7 +404,7 @@ fn impl_traverse_slot(cls: &syn::Type, spec: FnSpec<'_>) -> MethodAndSlotDef {
 }
 
 fn impl_py_class_attribute(cls: &syn::Type, spec: &FnSpec<'_>) -> syn::Result<MethodAndMethodDef> {
-    let (py_arg, args) = split_off_python_arg(&spec.args);
+    let (py_arg, args) = split_off_python_arg(&spec.signature.arguments);
     ensure_spanned!(
         args.is_empty(),
         args[0].ty.span() => "#[classattr] can only have one argument (of type pyo3::Python)"
@@ -410,7 +446,7 @@ fn impl_py_class_attribute(cls: &syn::Type, spec: &FnSpec<'_>) -> syn::Result<Me
 }
 
 fn impl_call_setter(cls: &syn::Type, spec: &FnSpec<'_>) -> syn::Result<TokenStream> {
-    let (py_arg, args) = split_off_python_arg(&spec.args);
+    let (py_arg, args) = split_off_python_arg(&spec.signature.arguments);
 
     if args.is_empty() {
         bail_spanned!(spec.name.span() => "setter function expected to have one argument");
@@ -483,34 +519,54 @@ pub fn impl_py_setter_def(
         }
     };
 
+    let mut cfg_attrs = TokenStream::new();
+    if let PropertyType::Descriptor { field, .. } = &property_type {
+        for attr in field.attrs.iter().filter(|attr| attr.path.is_ident("cfg")) {
+            attr.to_tokens(&mut cfg_attrs);
+        }
+    }
+
     let associated_method = quote! {
-        unsafe extern "C" fn #wrapper_ident(
+        #cfg_attrs
+        unsafe fn #wrapper_ident(
+            _py: _pyo3::Python<'_>,
             _slf: *mut _pyo3::ffi::PyObject,
             _value: *mut _pyo3::ffi::PyObject,
-            _: *mut ::std::os::raw::c_void
-        ) -> ::std::os::raw::c_int {
-            let gil = _pyo3::GILPool::new();
-            let _py = gil.python();
-            _pyo3::callback::panic_result_into_callback_output(_py, ::std::panic::catch_unwind(move || -> _pyo3::PyResult<_> {
-                #slf
-                let _value = _py
-                    .from_borrowed_ptr_or_opt(_value)
-                    .ok_or_else(|| {
-                        _pyo3::exceptions::PyAttributeError::new_err("can't delete attribute")
-                    })?;
-                let _val = _pyo3::FromPyObject::extract(_value)?;
+        ) -> _pyo3::PyResult<::std::os::raw::c_int> {
+            #slf
+            let _value = _py
+                .from_borrowed_ptr_or_opt(_value)
+                .ok_or_else(|| {
+                    _pyo3::exceptions::PyAttributeError::new_err("can't delete attribute")
+                })?;
+            let _val = _pyo3::FromPyObject::extract(_value)?;
 
-                _pyo3::callback::convert(_py, #setter_impl)
-            }))
+            _pyo3::callback::convert(_py, #setter_impl)
         }
     };
 
     let method_def = quote! {
+        #cfg_attrs
         _pyo3::class::PyMethodDefType::Setter({
             #deprecations
             _pyo3::class::PySetterDef::new(
                 #python_name,
-                _pyo3::impl_::pymethods::PySetter(#cls::#wrapper_ident),
+                _pyo3::impl_::pymethods::PySetter({
+                    unsafe extern "C" fn trampoline(
+                        slf: *mut _pyo3::ffi::PyObject,
+                        value: *mut _pyo3::ffi::PyObject,
+                        closure: *mut ::std::os::raw::c_void,
+                    ) -> ::std::os::raw::c_int
+                    {
+                        _pyo3::impl_::trampoline::setter(
+                            slf,
+                            value,
+                            closure,
+                            #cls::#wrapper_ident
+                        )
+                    }
+                    trampoline
+                }),
                 #doc
             )
         })
@@ -523,7 +579,7 @@ pub fn impl_py_setter_def(
 }
 
 fn impl_call_getter(cls: &syn::Type, spec: &FnSpec<'_>) -> syn::Result<TokenStream> {
-    let (py_arg, args) = split_off_python_arg(&spec.args);
+    let (py_arg, args) = split_off_python_arg(&spec.signature.arguments);
     ensure_spanned!(
         args.is_empty(),
         args[0].ty.span() => "getter function can only have one argument (of type pyo3::Python)"
@@ -555,7 +611,6 @@ pub fn impl_py_getter_def(
             ..
         } => {
             // named struct field
-            //quote!(_slf.#ident.clone())
             quote!(::std::clone::Clone::clone(&(_slf.#ident)))
         }
         PropertyType::Descriptor { field_index, .. } => {
@@ -607,27 +662,45 @@ pub fn impl_py_getter_def(
         }
     };
 
+    let mut cfg_attrs = TokenStream::new();
+    if let PropertyType::Descriptor { field, .. } = &property_type {
+        for attr in field.attrs.iter().filter(|attr| attr.path.is_ident("cfg")) {
+            attr.to_tokens(&mut cfg_attrs);
+        }
+    }
+
     let associated_method = quote! {
-        unsafe extern "C" fn #wrapper_ident(
-            _slf: *mut _pyo3::ffi::PyObject,
-            _: *mut ::std::os::raw::c_void
-        ) -> *mut _pyo3::ffi::PyObject {
-            let gil = _pyo3::GILPool::new();
-            let _py = gil.python();
-            _pyo3::callback::panic_result_into_callback_output(_py, ::std::panic::catch_unwind(move || -> _pyo3::PyResult<_> {
-                #slf
-                let item = #getter_impl;
-                #conversion
-            }))
+        #cfg_attrs
+        unsafe fn #wrapper_ident(
+            _py: _pyo3::Python<'_>,
+            _slf: *mut _pyo3::ffi::PyObject
+        ) -> _pyo3::PyResult<*mut _pyo3::ffi::PyObject> {
+            #slf
+            let item = #getter_impl;
+            #conversion
         }
     };
 
     let method_def = quote! {
+        #cfg_attrs
         _pyo3::class::PyMethodDefType::Getter({
             #deprecations
             _pyo3::class::PyGetterDef::new(
                 #python_name,
-                _pyo3::impl_::pymethods::PyGetter(#cls::#wrapper_ident),
+                _pyo3::impl_::pymethods::PyGetter({
+                    unsafe extern "C" fn trampoline(
+                        slf: *mut _pyo3::ffi::PyObject,
+                        closure: *mut ::std::os::raw::c_void,
+                    ) -> *mut _pyo3::ffi::PyObject
+                    {
+                        _pyo3::impl_::trampoline::getter(
+                            slf,
+                            closure,
+                            #cls::#wrapper_ident
+                        )
+                    }
+                    trampoline
+                }),
                 #doc
             )
         })
@@ -1050,21 +1123,33 @@ impl SlotDef {
             return_mode.as_ref(),
         )?;
         let associated_method = quote! {
-            unsafe extern "C" fn #wrapper_ident(_raw_slf: *mut _pyo3::ffi::PyObject, #(#arg_idents: #arg_types),*) -> #ret_ty {
+            unsafe fn #wrapper_ident(
+                #py: _pyo3::Python<'_>,
+                _raw_slf: *mut _pyo3::ffi::PyObject,
+                #(#arg_idents: #arg_types),*
+            ) -> _pyo3::PyResult<#ret_ty> {
                 let _slf = _raw_slf;
-                let gil = _pyo3::GILPool::new();
-                let #py = gil.python();
-                _pyo3::callback::panic_result_into_callback_output(#py, ::std::panic::catch_unwind(move || -> _pyo3::PyResult<_> {
-                    #body
-                }))
+                #body
             }
         };
-        let slot_def = quote! {
+        let slot_def = quote! {{
+            unsafe extern "C" fn trampoline(
+                _slf: *mut _pyo3::ffi::PyObject,
+                #(#arg_idents: #arg_types),*
+            ) -> #ret_ty
+            {
+                _pyo3::impl_::trampoline:: #func_ty (
+                    _slf,
+                    #(#arg_idents,)*
+                    #cls::#wrapper_ident
+                )
+            }
+
             _pyo3::ffi::PyType_Slot {
                 slot: _pyo3::ffi::#slot,
-                pfunc: #cls::#wrapper_ident as _pyo3::ffi::#func_ty as _
+                pfunc: trampoline as _pyo3::ffi::#func_ty as _
             }
-        };
+        }};
         Ok(MethodAndSlotDef {
             associated_method,
             slot_def,
@@ -1228,10 +1313,10 @@ fn extract_proto_arguments(
     proto_args: &[Ty],
     extract_error_mode: ExtractErrorMode,
 ) -> Result<Vec<TokenStream>> {
-    let mut args = Vec::with_capacity(spec.args.len());
+    let mut args = Vec::with_capacity(spec.signature.arguments.len());
     let mut non_python_args = 0;
 
-    for arg in &spec.args {
+    for arg in &spec.signature.arguments {
         if arg.py {
             args.push(quote! { #py });
         } else {
