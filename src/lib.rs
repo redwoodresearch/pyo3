@@ -21,7 +21,6 @@
     ),
     allow(unused_variables, unused_assignments, unused_extern_crates)
 )))]
-#![feature(backtrace)]
 
 //! Rust bindings to the Python interpreter.
 //!
@@ -66,7 +65,7 @@
 //!
 //! # Feature flags
 //!
-//! PyO3 uses [feature flags] to enable you to opt-in to additional functionality.For a detailed
+//! PyO3 uses [feature flags] to enable you to opt-in to additional functionality. For a detailed
 //! description, see the [Features chapter of the guide].
 //!
 //! ## Default feature flags
@@ -265,6 +264,8 @@
 //! [`Complex`]: https://docs.rs/num-complex/latest/num_complex/struct.Complex.html
 //! [`Deserialize`]: https://docs.rs/serde/latest/serde/trait.Deserialize.html
 //! [`Serialize`]: https://docs.rs/serde/latest/serde/trait.Serialize.html
+//! [chrono]: https://docs.rs/chrono/ "Date and Time for Rust."
+//! [`chrono`]: ./chrono/index.html "Documentation about the `chrono` feature."
 //! [eyre]: https://docs.rs/eyre/ "A library for easy idiomatic error handling and reporting in Rust applications."
 //! [`Report`]: https://docs.rs/eyre/latest/eyre/struct.Report.html
 //! [`eyre`]: ./eyre/index.html "Documentation about the `eyre` feature."
@@ -462,6 +463,7 @@ macro_rules! python_println{
 use regex::Regex;
 use std::any::Any;
 use std::backtrace::Backtrace;
+use std::thread;
 fn exception_filter_out_python_stuff(string: &str) -> String {
     let re = Regex::new(r"rust_circuit").unwrap();
     // println!("orig string {}", string);
@@ -489,21 +491,30 @@ pub fn catch_unwind_filtered<F, R>(f: F) -> std::thread::Result<R>
 where
     F: FnOnce() -> R + ::std::panic::UnwindSafe,
 {
-    let prev_hook = ::std::panic::take_hook();
-    if std::env::var("PYO3_NO_TRACEBACK_FILTER").is_err() {
-        ::std::panic::set_hook(Box::new(|panic_info| {
-            let bt = Backtrace::force_capture();
-            // should be eprintln but using python_println for jupyter issue
-            python_println!(
-                "panicked at '{}', {}\n{}",
-                &string_from_panic_payload(panic_info.payload()),
-                panic_info.location().unwrap(),
-                exception_filter_out_python_stuff(&bt.to_string())
-            )
-        }));
+    let panicing = thread::panicking();
+    let prev_hook = if !panicing {
+        Some(::std::panic::take_hook())
+    } else {
+        None
+    };
+    if !panicing {
+        if std::env::var("PYO3_NO_TRACEBACK_FILTER").is_err() {
+            ::std::panic::set_hook(Box::new(|panic_info| {
+                let bt = Backtrace::force_capture();
+                // should be eprintln but using python_println for jupyter issue
+                python_println!(
+                    "panicked at '{}', {}\n{}",
+                    &string_from_panic_payload(panic_info.payload()),
+                    panic_info.location().unwrap(),
+                    exception_filter_out_python_stuff(&bt.to_string())
+                )
+            }));
+        }
     }
     let result = ::std::panic::catch_unwind(f);
-    ::std::panic::set_hook(prev_hook);
+    if let Some(h) = prev_hook {
+        ::std::panic::set_hook(h);
+    }
     result
 }
 

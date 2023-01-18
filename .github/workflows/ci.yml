@@ -4,11 +4,15 @@ on:
   push:
     branches:
       - main
+      # for bors r+
+      - staging
+      # for bors try
+      - trying
   pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -16,15 +20,14 @@ env:
 
 jobs:
   fmt:
+    if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
       - run: pip install nox
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          profile: minimal
           components: rustfmt
       - name: Check python formatting (black)
         run: nox -s fmt-py
@@ -32,66 +35,150 @@ jobs:
         run: nox -s fmt-rust
 
   clippy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-      - run: pip install nox
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          components: clippy
-      - run: nox -s clippy
-
-  check-target:
     needs: [fmt]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform.os }}
+    if: github.ref != 'refs/heads/main'
     strategy:
       # If one platform fails, allow the rest to keep testing if `CI-no-fail-fast` label is present
       fail-fast: ${{ !contains(github.event.pull_request.labels.*.name, 'CI-no-fail-fast') }}
       matrix:
-        target: [powerpc64le-unknown-linux-gnu, s390x-unknown-linux-gnu, wasm32-wasi]
-    name: check-${{ matrix.target }}
+        rust: [stable]
+        platform: [
+          {
+            os: "macos-latest",
+            python-architecture: "x64",
+            rust-target: "x86_64-apple-darwin",
+          },
+          {
+            os: "ubuntu-latest",
+            python-architecture: "x64",
+            rust-target: "x86_64-unknown-linux-gnu",
+          },
+          {
+            os: "ubuntu-latest",
+            python-architecture: "x64",
+            rust-target: "powerpc64le-unknown-linux-gnu",
+          },
+          {
+            os: "ubuntu-latest",
+            python-architecture: "x64",
+            rust-target: "s390x-unknown-linux-gnu",
+          },
+          {
+            os: "ubuntu-latest",
+            python-architecture: "x64",
+            rust-target: "wasm32-wasi",
+          },
+          {
+            os: "windows-latest",
+            python-architecture: "x64",
+            rust-target: "x86_64-pc-windows-msvc",
+          },
+          {
+            os: "windows-latest",
+            python-architecture: "x86",
+            rust-target: "i686-pc-windows-msvc",
+          },
+        ]
+        include:
+          - rust: 1.48.0
+            python-version: "3.11"
+            platform:
+              {
+                os: "ubuntu-latest",
+                python-architecture: "x64",
+                rust-target: "x86_64-unknown-linux-gnu",
+              }
+            msrv: "MSRV"
+    name: clippy/${{ matrix.platform.rust-target }}/${{ matrix.rust }}
     steps:
       - uses: actions/checkout@v3
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          profile: minimal
-          default: true
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.rust-target }}
+          components: clippy
+      - uses: actions/setup-python@v4
+        with:
+          architecture: ${{ matrix.platform.python-architecture }}
+      - run: python -m pip install nox
+      - if: matrix.msrv == 'MSRV'
+        name: Prepare minimal package versions (MSRV only)
+        run: nox -s set-minimal-package-versions
+      - run: nox -s clippy-all
 
-      - name: Run cargo checks
-        run: |
-          set -x
-          VERSIONS=("3.7" "3.8" "3.9" "3.10")
-          for VERSION in ${VERSIONS[@]}; do
-            echo "version=$VERSION" > config.txt
-            echo "suppress_build_script_link_lines=true" >> config.txt
-            PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --no-default-features
-            PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --no-default-features --features "abi3"
-            PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --features "full multiple-pymethods"
-            PYO3_BUILD_CONFIG=$(pwd)/config.txt cargo check --all-targets --features "abi3 full multiple-pymethods"
-          done
-
-  build:
-    needs: [fmt] # don't wait for clippy as fails rarely and takes longer
+  build-pr:
+    if: github.event_name == 'pull_request'
     name: python${{ matrix.python-version }}-${{ matrix.platform.python-architecture }} ${{ matrix.platform.os }} rust-${{ matrix.rust }}
-    runs-on: ${{ matrix.platform.os }}
+    needs: [fmt]
+    uses: ./.github/workflows/build.yml
+    with:
+      os: ${{ matrix.platform.os }}
+      python-version: ${{ matrix.python-version }}
+      python-architecture: ${{ matrix.platform.python-architecture }}
+      rust: ${{ matrix.rust }}
+      rust-target: ${{ matrix.platform.rust-target }}
+      msrv: ${{ matrix.msrv }}
+      extra-features: ${{ matrix.platform.extra-features }}
+    secrets: inherit
     strategy:
       # If one platform fails, allow the rest to keep testing if `CI-no-fail-fast` label is present
       fail-fast: ${{ !contains(github.event.pull_request.labels.*.name, 'CI-no-fail-fast') }}
       matrix:
-        extra_features: ["multiple-pymethods"]  # Because MSRV doesn't support this
+        extra-features: ["multiple-pymethods"]
+        rust: [stable]
+        # FIXME - pinned to 3.11.0 because 3.11.1 breaks CI on windows, see PyO3 issue 2817
+        python-version: ["3.11.0"]
+        platform:
+          [
+            {
+              os: "macos-latest",
+              python-architecture: "x64",
+              rust-target: "x86_64-apple-darwin",
+            },
+            {
+              os: "ubuntu-latest",
+              python-architecture: "x64",
+              rust-target: "x86_64-unknown-linux-gnu",
+            },
+            {
+              os: "windows-latest",
+              python-architecture: "x64",
+              rust-target: "x86_64-pc-windows-msvc",
+            },
+            {
+              os: "windows-latest",
+              python-architecture: "x86",
+              rust-target: "i686-pc-windows-msvc",
+            }
+          ]
+  build-full:
+    if: ${{ github.event_name != 'pull_request' && github.ref != 'refs/heads/main' }}
+    name: python${{ matrix.python-version }}-${{ matrix.platform.python-architecture }} ${{ matrix.platform.os }} rust-${{ matrix.rust }}
+    needs: [fmt]
+    uses: ./.github/workflows/build.yml
+    with:
+      os: ${{ matrix.platform.os }}
+      python-version: ${{ matrix.python-version }}
+      python-architecture: ${{ matrix.platform.python-architecture }}
+      rust: ${{ matrix.rust }}
+      rust-target: ${{ matrix.platform.rust-target }}
+      msrv: ${{ matrix.msrv }}
+      extra-features: ${{ matrix.platform.extra-features }}
+    secrets: inherit
+    strategy:
+      # If one platform fails, allow the rest to keep testing if `CI-no-fail-fast` label is present
+      fail-fast: ${{ !contains(github.event.pull_request.labels.*.name, 'CI-no-fail-fast') }}
+      matrix:
+        extra-features: ["multiple-pymethods"]  # Because MSRV doesn't support this
         rust: [stable]
         python-version: [
           "3.7",
           "3.8",
           "3.9",
           "3.10",
-          "3.11-dev",
+          # FIXME - pinned to 3.11.0 because 3.11.1 breaks CI on windows, see PyO3 issue 2817
+          "3.11.0",
           "pypy-3.7",
           "pypy-3.8",
           "pypy-3.9"
@@ -117,7 +204,7 @@ jobs:
         include:
           # Test minimal supported Rust version
           - rust: 1.48.0
-            python-version: "3.10"
+            python-version: "3.11"
             platform:
               {
                 os: "ubuntu-latest",
@@ -125,198 +212,73 @@ jobs:
                 rust-target: "x86_64-unknown-linux-gnu",
               }
             msrv: "MSRV"
-            extra_features: ""
+            extra-features: ""
 
           # Test the `nightly` feature
           - rust: nightly
-            python-version: "3.10"
+            python-version: "3.11"
             platform:
               {
                 os: "ubuntu-latest",
                 python-architecture: "x64",
                 rust-target: "x86_64-unknown-linux-gnu",
               }
-            extra_features: "nightly multiple-pymethods"
+            extra-features: "nightly multiple-pymethods"
 
           # Test 32-bit Windows only with the latest Python version
           - rust: stable
-            python-version: "3.10"
+            # FIXME - pinned to 3.11.0 because 3.11.1 breaks CI on windows, see PyO3 issue 2817
+            python-version: "3.11.0"
             platform:
               {
                 os: "windows-latest",
                 python-architecture: "x86",
                 rust-target: "i686-pc-windows-msvc",
               }
-            extra_features: "multiple-pymethods"
+            extra-features: "multiple-pymethods"
+
+  valgrind:
+    if: ${{ github.event_name != 'pull_request' && github.ref != 'refs/heads/main' }}
+    needs: [fmt]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          python-version: ${{ matrix.python-version }}
-          architecture: ${{ matrix.platform.python-architecture }}
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          target: ${{ matrix.platform.rust-target }}
-          profile: minimal
-          default: true
-          # needed to correctly format errors, see #1865
-          components: rust-src
-
-      - uses: Swatinem/rust-cache@v1
-        with:
-          key: cargo-${{ matrix.platform.python-architecture }}-${{ matrix.platform.os }}-${{ matrix.msrv }}
+          key: cargo-valgrind
         continue-on-error: true
-
-      - if: matrix.platform.os == 'ubuntu-latest'
-        name: Prepare LD_LIBRARY_PATH (Ubuntu only)
-        run: echo LD_LIBRARY_PATH=${pythonLocation}/lib >> $GITHUB_ENV
-
-      - if: matrix.msrv == 'MSRV'
-        name: Prepare minimal package versions (MSRV only)
-        run: |
-          set -x
-          cargo update -p indexmap --precise 1.6.2
-          cargo update -p hashbrown:0.12.3 --precise 0.9.1
-          PROJECTS=("." "examples/decorator" "examples/maturin-starter" "examples/setuptools-rust-starter" "examples/word-count")
-          for PROJ in ${PROJECTS[@]}; do
-            cargo update --manifest-path "$PROJ/Cargo.toml" -p parking_lot --precise 0.11.0
-            cargo update --manifest-path "$PROJ/Cargo.toml" -p once_cell --precise 1.14.0
-          done
-          cargo update -p plotters --precise 0.3.1
-          cargo update -p plotters-svg --precise 0.3.1
-          cargo update -p plotters-backend --precise 0.3.2
-          cargo update -p bumpalo --precise 3.10.0
-          cargo update -p once_cell --precise 1.14.0
-
-      - name: Build docs
-        run: cargo doc --no-deps --no-default-features --features "full ${{ matrix.extra_features }}"
-
-      - name: Build (no features)
-        run: cargo build --lib --tests --no-default-features
-
-      # --no-default-features when used with `cargo build/test -p` doesn't seem to work!
-      - name: Build pyo3-build-config (no features)
-        run: |
-          cd pyo3-build-config
-          cargo build --no-default-features
-
-      # Run tests (except on PyPy, because no embedding API).
-      - if: ${{ !startsWith(matrix.python-version, 'pypy') }}
-        name: Test (no features)
-        run: cargo test --no-default-features --lib --tests
-
-      # --no-default-features when used with `cargo build/test -p` doesn't seem to work!
-      - name: Test pyo3-build-config (no features)
-        run: |
-          cd pyo3-build-config
-          cargo test --no-default-features
-
-      - name: Build (all additive features)
-        run: cargo build --lib --tests --no-default-features --features "full ${{ matrix.extra_features }}"
-
-      - if: ${{ startsWith(matrix.python-version, 'pypy') }}
-        name: Build PyPy (abi3-py37)
-        run: cargo build --lib --tests --no-default-features --features "abi3-py37 full ${{ matrix.extra_features }}"
-
-      # Run tests (except on PyPy, because no embedding API).
-      - if: ${{ !startsWith(matrix.python-version, 'pypy') }}
-        name: Test
-        run: cargo test --no-default-features --features "full ${{ matrix.extra_features }}"
-
-      # Run tests again, but in abi3 mode
-      - if: ${{ !startsWith(matrix.python-version, 'pypy') }}
-        name: Test (abi3)
-        run: cargo test --no-default-features --features "abi3 full ${{ matrix.extra_features }}"
-
-      # Run tests again, for abi3-py37 (the minimal Python version)
-      - if: ${{ (!startsWith(matrix.python-version, 'pypy')) && (matrix.python-version != '3.7') }}
-        name: Test (abi3-py37)
-        run: cargo test --no-default-features --features "abi3-py37 full ${{ matrix.extra_features }}"
-
-      - name: Test proc-macro code
-        run: cargo test --manifest-path=pyo3-macros-backend/Cargo.toml
-
-      - name: Test build config
-        run: cargo test --manifest-path=pyo3-build-config/Cargo.toml
-
-      - name: Test python examples and tests
-        shell: bash
-        run: |
-          python -m pip install -U pip nox
-          nox -s test-py
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target
-
-      - name: Test cross compilation
-        if: ${{ matrix.platform.os == 'ubuntu-latest' && matrix.python-version == '3.9' }}
-        uses: messense/maturin-action@v1
-        env:
-          PYO3_CROSS_LIB_DIR: /opt/python/cp39-cp39/lib
-        with:
-          target: aarch64-unknown-linux-gnu
-          manylinux: auto
-          args: --release -i python3.9 -m examples/maturin-starter/Cargo.toml
-
-      - run: sudo rm -rf examples/maturin-starter/target
-        if: ${{ matrix.platform.os == 'ubuntu-latest' && matrix.python-version == '3.9' }}
-      - name: Test cross compile to same architecture
-        if: ${{ matrix.platform.os == 'ubuntu-latest' && matrix.python-version == '3.9' }}
-        uses: messense/maturin-action@v1
-        env:
-          PYO3_CROSS_LIB_DIR: /opt/python/cp39-cp39/lib
-        with:
-          target: x86_64-unknown-linux-gnu
-          manylinux: auto
-          args: --release -i python3.9 -m examples/maturin-starter/Cargo.toml
-
-      - name: Test cross compilation
-        if: ${{ matrix.platform.os == 'macos-latest' && matrix.python-version == '3.9' }}
-        uses: messense/maturin-action@v1
-        with:
-          target: aarch64-apple-darwin
-          args: --release -i python3.9 -m examples/maturin-starter/Cargo.toml
-
-      - name: Test cross compile to Windows
-        if: ${{ matrix.platform.os == 'ubuntu-latest' && matrix.python-version == '3.8' }}
-        env:
-          XWIN_ARCH: x86_64
-        run: |
-          set -ex
-          sudo apt-get install -y mingw-w64 llvm
-          rustup target add x86_64-pc-windows-gnu x86_64-pc-windows-msvc
-          python -m pip install cargo-xwin
-          # abi3
-          cargo build --manifest-path examples/maturin-starter/Cargo.toml --features abi3 --target x86_64-pc-windows-gnu
-          cargo xwin build --manifest-path examples/maturin-starter/Cargo.toml --features abi3 --target x86_64-pc-windows-msvc
-          # non-abi3
-          export PYO3_CROSS_PYTHON_VERSION=3.9
-          cargo build --manifest-path examples/maturin-starter/Cargo.toml --features generate-import-lib --target x86_64-pc-windows-gnu
-          cargo xwin build --manifest-path examples/maturin-starter/Cargo.toml --features generate-import-lib --target x86_64-pc-windows-msvc
-      - name: Test cross compile to Windows with maturin
-        if: ${{ matrix.platform.os == 'ubuntu-latest' && matrix.python-version == '3.8' }}
-        uses: messense/maturin-action@v1
-        with:
-          target: x86_64-pc-windows-gnu
-          args: -i python3.8 -m examples/maturin-starter/Cargo.toml --features abi3
-
+      # FIXME(adamreichold): Switch to stable when Valgrind understands DWARF5 as generated by LLVM 14,
+      # c.f. https://bugs.kde.org/show_bug.cgi?id=452758#c35
+      - uses: dtolnay/rust-toolchain@1.61.0
+      - uses: taiki-e/install-action@valgrind
+      - run: python -m pip install -U pip nox
+      - run: nox -s test-rust -- release skip-full
     env:
-      CARGO_TERM_VERBOSE: true
-      CARGO_BUILD_TARGET: ${{ matrix.platform.rust-target }}
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: valgrind --leak-check=no --error-exitcode=1
       RUST_BACKTRACE: 1
-      RUSTFLAGS: "-D warnings"
-      RUSTDOCFLAGS: "-D warnings"
-      # TODO: this is a hack to workaround compile_error! warnings about auto-initialize on PyPy
-      # Once cargo's `resolver = "2"` is stable (~ MSRV Rust 1.52), remove this.
-      PYO3_CI: 1
-      # This is a hack to make CARGO_PRIMARY_PACKAGE always set even for the
-      # msrv job. MSRV is currently 1.48, but CARGO_PRIMARY_PACKAGE only came in
-      # 1.49.
-      CARGO_PRIMARY_PACKAGE: 1
+      TRYBUILD: overwrite
+
+  careful:
+    if: ${{ github.event_name != 'pull_request' && github.ref != 'refs/heads/main' }}
+    needs: [fmt]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cargo-careful
+        continue-on-error: true
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - run: cargo install cargo-careful
+      - run: python -m pip install -U pip nox
+      - run: nox -s test-rust -- careful skip-full
+    env:
+      RUST_BACKTRACE: 1
+      TRYBUILD: overwrite
 
   coverage:
     needs: [fmt]
@@ -326,43 +288,48 @@ jobs:
         os: ["windows", "macos", "ubuntu"]
     runs-on: ${{ matrix.os }}-latest
     steps:
+      - if: ${{ github.event_name == 'pull_request' && matrix.os != 'ubuntu' }}
+        id: should-skip
+        shell: bash
+        run: echo 'skip=true' >> $GITHUB_OUTPUT
       - uses: actions/checkout@v3
+        if: steps.should-skip.outputs.skip != 'true'
       - uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-      - uses: Swatinem/rust-cache@v1
+        if: steps.should-skip.outputs.skip != 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.should-skip.outputs.skip != 'true'
         with:
           key: coverage-cargo-${{ matrix.os }}
         continue-on-error: true
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.should-skip.outputs.skip != 'true'
         with:
-          toolchain: stable
-          override: true
-          profile: minimal
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
+        if: steps.should-skip.outputs.skip != 'true'
         uses: taiki-e/install-action@cargo-llvm-cov
       - run: python -m pip install -U pip nox
+        if: steps.should-skip.outputs.skip != 'true'
       - run: nox -s coverage
+        if: steps.should-skip.outputs.skip != 'true'
       - uses: codecov/codecov-action@v3
+        if: steps.should-skip.outputs.skip != 'true'
         with:
           file: coverage.lcov
           name: ${{ matrix.os }}
 
   emscripten:
     name: emscripten
+    if: ${{ github.event_name != 'pull_request' && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         id: setup-python
-        with:
-          python-version: 3.11.0-beta.4
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: wasm32-unknown-emscripten
+          targets: wasm32-unknown-emscripten
       - uses: actions/setup-node@v3
         with:
           node-version: 14
@@ -373,7 +340,7 @@ jobs:
           path: |
             .nox/emscripten
           key: ${{ hashFiles('emscripten/*') }} - ${{ hashFiles('noxfile.py') }} - ${{ steps.setup-python.outputs.python-path }}
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
         with:
           key: cargo-emscripten-wasm32
       - name: Build
@@ -381,3 +348,24 @@ jobs:
         run: nox -s build-emscripten
       - name: Test
         run: nox -s test-emscripten
+
+  conclusion:
+    needs:
+      - fmt
+      - clippy
+      - build-pr
+      - build-full
+      - valgrind
+      - careful
+      - coverage
+      - emscripten
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Result
+        run: |
+          jq -C <<< "${needs}"
+          # Check if all needs were successful or skipped.
+          "$(jq -r 'all(.result as $result | (["success", "skipped"] | contains([$result])))' <<< "${needs}")"
+        env:
+          needs: ${{ toJson(needs) }}

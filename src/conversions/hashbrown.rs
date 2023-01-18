@@ -22,8 +22,9 @@
 //! Note that you must use compatible versions of hashbrown and PyO3.
 //! The required hashbrown version may vary based on the version of PyO3.
 use crate::{
+    types::set::new_from_iter,
     types::{IntoPyDict, PyDict, PySet},
-    FromPyObject, IntoPy, PyAny, PyErr, PyObject, PyResult, PyTryFrom, Python, ToPyObject,
+    FromPyObject, IntoPy, PyAny, PyErr, PyObject, PyResult, Python, ToPyObject,
 };
 use std::{cmp, hash};
 
@@ -59,7 +60,7 @@ where
     S: hash::BuildHasher + Default,
 {
     fn extract(ob: &'source PyAny) -> Result<Self, PyErr> {
-        let dict = <PyDict as PyTryFrom>::try_from(ob)?;
+        let dict: &PyDict = ob.downcast()?;
         let mut ret = hashbrown::HashMap::with_capacity_and_hasher(dict.len(), S::default());
         for (k, v) in dict.iter() {
             ret.insert(K::extract(k)?, V::extract(v)?);
@@ -73,13 +74,9 @@ where
     T: hash::Hash + Eq + ToPyObject,
 {
     fn to_object(&self, py: Python<'_>) -> PyObject {
-        let set = PySet::new::<T>(py, &[]).expect("Failed to construct empty set");
-        {
-            for val in self {
-                set.add(val).expect("Failed to add to set");
-            }
-        }
-        set.into()
+        new_from_iter(py, self)
+            .expect("Failed to create Python set from hashbrown::HashSet")
+            .into()
     }
 }
 
@@ -89,13 +86,9 @@ where
     S: hash::BuildHasher + Default,
 {
     fn into_py(self, py: Python<'_>) -> PyObject {
-        let set = PySet::empty(py).expect("Failed to construct empty set");
-        {
-            for val in self {
-                set.add(val.into_py(py)).expect("Failed to add to set");
-            }
-        }
-        set.into()
+        new_from_iter(py, self.into_iter().map(|item| item.into_py(py)))
+            .expect("Failed to create Python set from hashbrown::HashSet")
+            .into()
     }
 }
 
@@ -121,7 +114,7 @@ mod tests {
             map.insert(1, 1);
 
             let m = map.to_object(py);
-            let py_map = <PyDict as PyTryFrom>::try_from(m.as_ref(py)).unwrap();
+            let py_map: &PyDict = m.downcast(py).unwrap();
 
             assert!(py_map.len() == 1);
             assert!(py_map.get_item(1).unwrap().extract::<i32>().unwrap() == 1);
@@ -135,7 +128,7 @@ mod tests {
             map.insert(1, 1);
 
             let m: PyObject = map.into_py(py);
-            let py_map = <PyDict as PyTryFrom>::try_from(m.as_ref(py)).unwrap();
+            let py_map: &PyDict = m.downcast(py).unwrap();
 
             assert!(py_map.len() == 1);
             assert!(py_map.get_item(1).unwrap().extract::<i32>().unwrap() == 1);

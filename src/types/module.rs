@@ -32,8 +32,8 @@ impl PyModule {
     /// ``` rust
     /// use pyo3::prelude::*;
     ///
-    /// # fn main() -> PyResult<()>{
-    /// Python::with_gil(|py| -> PyResult<()>{
+    /// # fn main() -> PyResult<()> {
+    /// Python::with_gil(|py| -> PyResult<()> {
     ///     let module = PyModule::new(py, "my_module")?;
     ///
     ///     assert_eq!(module.name()?, "my_module");
@@ -52,7 +52,7 @@ impl PyModule {
     /// # Examples
     ///
     /// ```no_run
-    /// # fn main(){
+    /// # fn main() {
     /// use pyo3::prelude::*;
     ///
     /// Python::with_gil(|py| {
@@ -203,7 +203,7 @@ impl PyModule {
     /// Returns the filename (the `__file__` attribute) of the module.
     ///
     /// May fail if the module does not have a `__file__` attribute.
-    #[cfg(not(all(windows, PyPy)))]
+    #[cfg(not(PyPy))]
     pub fn filename(&self) -> PyResult<&str> {
         unsafe {
             self.py()

@@ -54,8 +54,8 @@ impl MyClass {
 
 #[pymethods]
 impl MyClass {
-    #[pyo3(text_signature = "()")]
-    fn __call__(&self) {}
+    #[pyo3(name = "__call__", text_signature = "()")]
+    fn text_signature_on_call() {}
 }
 
 #[pymethods]
@@ -81,6 +81,40 @@ impl MyClass {
 
 #[pymethods]
 impl MyClass {
+    #[pyo3(text_signature = 1)]
+    fn invalid_text_signature() {}
+}
+
+#[pymethods]
+impl MyClass {
+    #[pyo3(text_signature = "()")]
+    #[pyo3(text_signature = None)]
+    fn duplicate_text_signature() {}
+}
+
+#[pymethods]
+impl MyClass {
+    #[getter(x)]
+    #[pyo3(signature = ())]
+    fn signature_on_getter(&self) {}
+}
+
+#[pymethods]
+impl MyClass {
+    #[setter(x)]
+    #[pyo3(signature = ())]
+    fn signature_on_setter(&self) {}
+}
+
+#[pymethods]
+impl MyClass {
+    #[classattr]
+    #[pyo3(signature = ())]
+    fn signature_on_classattr() {}
+}
+
+#[pymethods]
+impl MyClass {
     #[classattr]
     #[staticmethod]
     fn multiple_method_types() {}
@@ -90,7 +124,6 @@ impl MyClass {
 impl MyClass {
     fn generic_method<T>(value: T) {}
 }
-
 
 #[pymethods]
 impl MyClass {
@@ -115,36 +148,33 @@ impl MyClass {
 
 #[pymethods]
 impl MyClass {
-    #[args(has_default = "1")]
-    fn default_arg_before_required(&self, has_default: isize, required: isize) {}
+    fn method_self_by_value(self) {}
 }
 
-#[pymethods]
-impl MyClass {
-    fn method_self_by_value(self){}
-}
-
-struct TwoNew { }
+struct TwoNew {}
 
 #[pymethods]
 impl TwoNew {
     #[new]
-    fn new_1() -> Self { Self { } }
+    fn new_1() -> Self {
+        Self {}
+    }
 
     #[new]
-    fn new_2() -> Self { Self { } }
+    fn new_2() -> Self {
+        Self {}
+    }
 }
 
-struct DuplicateMethod { }
+struct DuplicateMethod {}
 
 #[pymethods]
 impl DuplicateMethod {
     #[pyo3(name = "func")]
-    fn func_a(&self) { }
+    fn func_a(&self) {}
 
     #[pyo3(name = "func")]
-    fn func_b(&self) { }
+    fn func_b(&self) {}
 }
-
 
 fn main() {}

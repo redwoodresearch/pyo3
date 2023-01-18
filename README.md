@@ -81,7 +81,7 @@ name = "string_sum"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.17.2", features = ["extension-module"] }
+pyo3 = { version = "0.17.3", features = ["extension-module"] }
 ```
 
 **`src/lib.rs`**
@@ -143,11 +143,14 @@ To install the Python shared library on Ubuntu:
 sudo apt install python3-dev
 ```
 
+To install the Python shared library on RPM based distributions (e.g. Fedora, Red Hat, SuSE), install the `python3-devel` package.
+
+
 Start a new project with `cargo new` and add  `pyo3` to the `Cargo.toml` like this:
 
 ```toml
 [dependencies.pyo3]
-version = "0.17.2"
+version = "0.17.3"
 features = ["auto-initialize"]
 ```
 
