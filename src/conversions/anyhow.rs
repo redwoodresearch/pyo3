@@ -115,32 +115,22 @@ use std::sync::Mutex;
 // get exception stuff is Redwood hack. Could maybe be upstreamed, but would need to be improved...
 
 // fallback only used on < 3.11
-pub fn anyhow_to_py_err<F>(err: &anyhow::Error, fallback: F) -> PyErr
+pub fn anyhow_to_py_err<F>(err: anyhow::Error, fallback: F) -> PyErr
 where
-    F: for<'py> FnOnce(Python<'py>, PyErr, Vec<String>) -> PyErr,
+    F: for<'py> FnOnce(Python<'py>, PyErr, anyhow::Error) -> PyErr,
 {
     Python::with_gil(|py| {
         if let Some(py_err) = err.root_cause().downcast_ref::<PyErr>() {
             if err.chain().nth(1).is_none() {
                 py_err.clone_ref(py)
             } else {
-                let mut stack: Vec<String> = Vec::new();
-                let mut iter = err.chain().peekable();
-                while let Some(x) = iter.next() {
-                    if iter.peek().is_none() {
-                        break;
-                    };
-                    stack.push(format!("  rust context: {}", x));
-                }
                 if cfg!(Py_3_11) {
                     let py_err = py_err.clone_ref(py).into_value(py);
                     let py_err = py_err.as_ref(py);
-                    for x in stack.iter().rev() {
-                        py_err.call_method1("add_note", (x,)).unwrap();
-                    }
+                    py_err.call_method1("add_note", (format!("\nRust context: {err:?}"),)).unwrap();
                     PyErr::from_value(py_err)
                 } else {
-                    fallback(py, py_err.clone_ref(py), stack)
+                    fallback(py, py_err.clone_ref(py), err)
                 }
             }
         } else {
@@ -150,7 +140,7 @@ where
 }
 
 pub fn default_anyhow_to_py_err(err: anyhow::Error) -> PyErr {
-    anyhow_to_py_err(&err, |_, _, _| PyRuntimeError::new_err(format!("{:?}", err)))
+    anyhow_to_py_err(err, |_, _, e| PyRuntimeError::new_err(format!("{:?}", e)))
 }
 
 static ANYHOW_TO_PY_ERR: GILLazy<
