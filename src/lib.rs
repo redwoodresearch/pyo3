@@ -476,13 +476,17 @@ fn exception_filter_out_python_stuff(string: &str) -> String {
     result
 }
 
-fn string_from_panic_payload(payload: &(dyn Any + Send)) -> String {
-    if let Some(string) = payload.downcast_ref::<String>() {
-        string.clone()
-    } else if let Some(s) = payload.downcast_ref::<&str>() {
-        s.to_string()
+fn string_from_panic_payload(payload: &(dyn Any + Send)) -> Option<String> {
+    if payload.downcast_ref::<PyErr>().is_some() {
+        None
     } else {
-        "UNKNOWN panic!!!".to_owned()
+        Some(if let Some(string) = payload.downcast_ref::<String>() {
+            string.clone()
+        } else if let Some(s) = payload.downcast_ref::<&str>() {
+            s.to_string()
+        } else {
+            "UNKNOWN panic!!!".to_owned()
+        })
     }
 }
 
@@ -501,13 +505,15 @@ where
         if std::env::var("PYO3_NO_TRACEBACK_FILTER").is_err() {
             ::std::panic::set_hook(Box::new(|panic_info| {
                 let bt = Backtrace::force_capture();
-                // should be eprintln but using python_println for jupyter issue
-                python_println!(
-                    "panicked at '{}', {}\n{}",
-                    &string_from_panic_payload(panic_info.payload()),
-                    panic_info.location().unwrap(),
-                    exception_filter_out_python_stuff(&bt.to_string())
-                )
+                if let Some(string) = string_from_panic_payload(panic_info.payload()) {
+                    // should be eprintln but using python_println for jupyter issue
+                    python_println!(
+                        "panicked at '{}', {}\n{}",
+                        &string,
+                        panic_info.location().unwrap(),
+                        exception_filter_out_python_stuff(&bt.to_string())
+                    )
+                }
             }));
         }
     }
