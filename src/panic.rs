@@ -21,7 +21,9 @@ impl PanicException {
     /// Attempts to format the error in the same way panic does.
     #[cold]
     pub(crate) fn from_panic_payload(payload: Box<dyn Any + Send + 'static>) -> PyErr {
-        if let Some(string) = payload.downcast_ref::<String>() {
+        if let Some(err) = payload.downcast_ref::<PyErr>() {
+            err
+        } else if let Some(string) = payload.downcast_ref::<String>() {
             Self::new_err((string.clone(),))
         } else if let Some(s) = payload.downcast_ref::<&str>() {
             Self::new_err((s.to_string(),))
