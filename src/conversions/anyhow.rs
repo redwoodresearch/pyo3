@@ -108,7 +108,7 @@
 //! [Error handling]: https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html "Recoverable Errors with Result - The Rust Programming Language"
 
 use crate::{
-    exceptions::PyRuntimeError, once_cell::GILLazy, types::PyType, Py, PyErr, PyTypeInfo, Python,
+    exceptions::PyRuntimeError, sync::GILLazy, types::PyType, Py, PyErr, PyTypeInfo, Python,
 };
 use std::sync::Mutex;
 
