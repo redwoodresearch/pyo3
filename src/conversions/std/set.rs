@@ -1,8 +1,10 @@
 use std::{cmp, collections, hash};
 
+#[cfg(feature = "experimental-inspect")]
+use crate::inspect::types::TypeInfo;
 use crate::{
-    inspect::types::TypeInfo, types::set::new_from_iter, types::PySet, FromPyObject, IntoPy, PyAny,
-    PyObject, PyResult, Python, ToPyObject,
+    types::set::new_from_iter, types::PySet, FromPyObject, IntoPy, PyAny, PyObject, PyResult,
+    Python, ToPyObject,
 };
 
 use crate::types::PyFrozenSet;
@@ -41,6 +43,7 @@ where
             .into()
     }
 
+    #[cfg(feature = "experimental-inspect")]
     fn type_output() -> TypeInfo {
         TypeInfo::set_of(K::type_output())
     }
@@ -61,6 +64,7 @@ where
             })
     }
 
+    #[cfg(feature = "experimental-inspect")]
     fn type_input() -> TypeInfo {
         TypeInfo::set_of(K::type_input())
     }
@@ -76,6 +80,7 @@ where
             .into()
     }
 
+    #[cfg(feature = "experimental-inspect")]
     fn type_output() -> TypeInfo {
         TypeInfo::set_of(K::type_output())
     }
@@ -95,6 +100,7 @@ where
             })
     }
 
+    #[cfg(feature = "experimental-inspect")]
     fn type_input() -> TypeInfo {
         TypeInfo::set_of(K::type_input())
     }

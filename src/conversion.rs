@@ -5,6 +5,7 @@ use smallvec::{Array, SmallVec};
 use uuid::Uuid;
 
 use crate::err::{self, PyDowncastError, PyResult};
+#[cfg(feature = "experimental-inspect")]
 use crate::inspect::types::TypeInfo;
 use crate::pyclass::boolean_struct::False;
 use crate::type_object::PyTypeInfo;
@@ -14,6 +15,7 @@ use crate::{
     PyRefMut, Python,
 };
 use std::convert::TryInto;
+use std::cell::Cell;
 use std::ptr::NonNull;
 
 /// Returns a borrowed pointer to a Python object.
@@ -78,7 +80,6 @@ pub trait AsPyPointer {
 ///
 /// ```rust
 /// use pyo3::prelude::*;
-/// use pyo3::IntoPyPointer;
 /// use pyo3::types::PyString;
 /// use pyo3::ffi;
 ///
@@ -258,6 +259,7 @@ pub trait IntoPy<T>: Sized {
     ///
     /// For most types, the return value for this method will be identical to that of [`FromPyObject::type_input`].
     /// It may be different for some types, such as `Dict`, to allow duck-typing: functions return `Dict` but take `Mapping` as argument.
+    #[cfg(feature = "experimental-inspect")]
     fn type_output() -> TypeInfo {
         TypeInfo::Any
     }
@@ -314,6 +316,7 @@ pub trait FromPyObject<'source>: Sized {
     ///
     /// For most types, the return value for this method will be identical to that of [`IntoPy::type_output`].
     /// It may be different for some types, such as `Dict`, to allow duck-typing: functions return `Dict` but take `Mapping` as argument.
+    #[cfg(feature = "experimental-inspect")]
     fn type_input() -> TypeInfo {
         TypeInfo::Any
     }
@@ -369,6 +372,24 @@ where
     #[inline]
     fn into_py(self, py: Python<'_>) -> PyObject {
         unsafe { PyObject::from_borrowed_ptr(py, self.as_ptr()) }
+    }
+}
+
+impl<T: Copy + ToPyObject> ToPyObject for Cell<T> {
+    fn to_object(&self, py: Python<'_>) -> PyObject {
+        self.get().to_object(py)
+    }
+}
+
+impl<T: Copy + IntoPy<PyObject>> IntoPy<PyObject> for Cell<T> {
+    fn into_py(self, py: Python<'_>) -> PyObject {
+        self.get().into_py(py)
+    }
+}
+
+impl<'a, T: FromPyObject<'a>> FromPyObject<'a> for Cell<T> {
+    fn extract(ob: &'a PyAny) -> PyResult<Self> {
+        T::extract(ob).map(Cell::new)
     }
 }
 

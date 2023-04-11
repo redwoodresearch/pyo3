@@ -13,9 +13,7 @@ Follow the process below to update all required pieces to bump the version. All 
    - `pre-script.rhai` templates for the examples.
    - `[towncrier]` section in `pyproject.toml`.
 
-   Places where you need to be a bit careful:
-   - Add _new_ lines to the netlify `_redirects` file rather than replacing the existing ones.
-   - Make sure not to modify the CHANGELOG during this step!
+   Make sure not to modify the CHANGELOG during this step!
 
 2. Run `towncrier build` to generate the CHANGELOG. The version used by `towncrier` should automatically be correct because of the update to `pyproject.toml` in step 1.
 
@@ -37,7 +35,7 @@ Write release notes which match the style of previous releases. You can get the 
 
 Save as a draft and wait for now.
 
-## 3. Leave for a cooling off period
+## 3. Leave for a cooling off period
 
 Wait a couple of days in case anyone wants to hold up the release to add bugfixes etc.
 
@@ -52,6 +50,6 @@ To put live:
 
 If the release PR targeted a branch other than main, you will need to cherry-pick the version bumps, CHANGELOG modifications and removal of towncrier `newsfragments` and open another PR to land these on main.
 
-## 6. Delete the release branch (patch releases only)
+## 6. Delete the release branch (patch releases only)
 
 For 0.X.Y patch releases, the release branch is no longer needed, so it should be deleted.

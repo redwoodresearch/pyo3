@@ -3,8 +3,10 @@
 use std::convert::TryInto;
 
 use crate::ffi::{self, Py_ssize_t};
+#[cfg(feature = "experimental-inspect")]
 use crate::inspect::types::TypeInfo;
 use crate::internal_tricks::get_ssize_index;
+use crate::types::PyList;
 use crate::types::PySequence;
 use crate::{
     exceptions, AsPyPointer, FromPyObject, IntoPy, IntoPyPointer, Py, PyAny, PyErr, PyObject,
@@ -212,6 +214,15 @@ impl PyTuple {
             length: self.len(),
         }
     }
+
+    /// Return a new list containing the contents of this tuple; equivalent to the Python expression `list(tuple)`.
+    ///
+    /// This method is equivalent to `self.as_sequence().list()` and faster than `PyList::new(py, self)`.
+    pub fn to_list(&self) -> &PyList {
+        self.as_sequence()
+            .list()
+            .expect("failed to convert tuple to list")
+    }
 }
 
 index_impls!(PyTuple, "tuple", PyTuple::len, PyTuple::get_slice);
@@ -293,7 +304,8 @@ macro_rules! tuple_conversion ({$length:expr,$(($refN:ident, $n:tt, $T:ident)),+
             }
         }
 
-        fn type_output() -> TypeInfo {
+        #[cfg(feature = "experimental-inspect")]
+fn type_output() -> TypeInfo {
             TypeInfo::Tuple(Some(vec![$( $T::type_output() ),+]))
         }
     }
@@ -308,6 +320,7 @@ macro_rules! tuple_conversion ({$length:expr,$(($refN:ident, $n:tt, $T:ident)),+
             }
         }
 
+        #[cfg(feature = "experimental-inspect")]
         fn type_output() -> TypeInfo {
             TypeInfo::Tuple(Some(vec![$( $T::type_output() ),+]))
         }
@@ -328,7 +341,8 @@ macro_rules! tuple_conversion ({$length:expr,$(($refN:ident, $n:tt, $T:ident)),+
             }
         }
 
-        fn type_input() -> TypeInfo {
+        #[cfg(feature = "experimental-inspect")]
+fn type_input() -> TypeInfo {
             TypeInfo::Tuple(Some(vec![$( $T::type_input() ),+]))
         }
     }
@@ -440,7 +454,7 @@ tuple_conversion!(
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{PyAny, PyTuple};
+    use crate::types::{PyAny, PyList, PyTuple};
     use crate::{Python, ToPyObject};
     use std::collections::HashSet;
 
@@ -810,9 +824,8 @@ mod tests {
 
         impl Clone for Bad {
             fn clone(&self) -> Self {
-                if self.0 == 42 {
-                    panic!()
-                };
+                // This panic should not lead to a memory leak
+                assert_ne!(self.0, 42);
                 NEEDS_DESTRUCTING_COUNT.fetch_add(1, SeqCst);
 
                 Bad(self.0)
@@ -851,10 +864,11 @@ mod tests {
         }
 
         Python::with_gil(|py| {
-            let _ = std::panic::catch_unwind(|| {
+            std::panic::catch_unwind(|| {
                 let iter = FaultyIter(0..50, 50);
                 let _tuple = PyTuple::new(py, iter);
-            });
+            })
+            .unwrap_err();
         });
 
         assert_eq!(
@@ -878,10 +892,8 @@ mod tests {
 
         impl Clone for Bad {
             fn clone(&self) -> Self {
-                if self.0 == 3 {
-                    // This panic should not lead to a memory leak
-                    panic!()
-                };
+                // This panic should not lead to a memory leak
+                assert_ne!(self.0, 3);
                 NEEDS_DESTRUCTING_COUNT.fetch_add(1, SeqCst);
 
                 Bad(self.0)
@@ -903,9 +915,10 @@ mod tests {
         let s = (Bad(1), Bad(2), Bad(3), Bad(4));
         NEEDS_DESTRUCTING_COUNT.store(4, SeqCst);
         Python::with_gil(|py| {
-            let _ = std::panic::catch_unwind(|| {
+            std::panic::catch_unwind(|| {
                 let _tuple: Py<PyAny> = s.to_object(py);
-            });
+            })
+            .unwrap_err();
         });
         drop(s);
 
@@ -914,5 +927,15 @@ mod tests {
             0,
             "Some destructors did not run"
         );
+    }
+
+    #[test]
+    fn test_tuple_to_list() {
+        Python::with_gil(|py| {
+            let tuple = PyTuple::new(py, vec![1, 2, 3]);
+            let list = tuple.to_list();
+            let list_expected = PyList::new(py, vec![1, 2, 3]);
+            assert!(list.eq(list_expected).unwrap());
+        })
     }
 }

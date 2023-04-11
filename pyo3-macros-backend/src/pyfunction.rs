@@ -366,7 +366,7 @@ pub fn impl_wrap_pyfunction(
         deprecated_args,
         signature,
         text_signature,
-        deprecations,
+        mut deprecations,
         krate,
     } = options;
 
@@ -404,7 +404,7 @@ pub fn impl_wrap_pyfunction(
     } else if let Some(deprecated_args) = deprecated_args {
         FunctionSignature::from_arguments_and_deprecated_args(arguments, deprecated_args)?
     } else {
-        FunctionSignature::from_arguments(arguments)
+        FunctionSignature::from_arguments(arguments, &mut deprecations)
     };
 
     let ty = method::get_return_info(&func.sig.output);
@@ -425,7 +425,6 @@ pub fn impl_wrap_pyfunction(
         python_name,
         signature,
         output: ty,
-        doc,
         deprecations,
         text_signature,
         unsafety: func.sig.unsafety,
@@ -436,7 +435,7 @@ pub fn impl_wrap_pyfunction(
 
     let wrapper_ident = format_ident!("__pyfunction_{}", spec.name);
     let wrapper = spec.get_wrapper_function(&wrapper_ident, None)?;
-    let methoddef = spec.get_methoddef(wrapper_ident);
+    let methoddef = spec.get_methoddef(wrapper_ident, &doc);
 
     let wrapped_pyfunction = quote! {
 
@@ -458,6 +457,7 @@ pub fn impl_wrap_pyfunction(
                 const DEF: #krate::impl_::pyfunction::PyMethodDef = #methoddef;
             }
 
+            #[allow(non_snake_case)]
             #wrapper
         };
     };

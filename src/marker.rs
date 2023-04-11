@@ -120,7 +120,7 @@
 //! [`Rc`]: std::rc::Rc
 //! [`Py`]: crate::Py
 use crate::err::{self, PyDowncastError, PyErr, PyResult};
-use crate::gil::{self, GILGuard, GILPool};
+use crate::gil::{self, GILGuard, GILPool, SuspendGIL};
 use crate::impl_::not_send::NotSend;
 use crate::types::{PyAny, PyDict, PyModule, PyString, PyType};
 use crate::version::PythonVersionInfo;
@@ -465,29 +465,11 @@ impl<'py> Python<'py> {
         F: Ungil + FnOnce() -> T,
         T: Ungil,
     {
-        // Use a guard pattern to handle reacquiring the GIL, so that the GIL will be reacquired
-        // even if `f` panics.
-
-        struct RestoreGuard {
-            count: usize,
-            tstate: *mut ffi::PyThreadState,
-        }
-
-        impl Drop for RestoreGuard {
-            fn drop(&mut self) {
-                gil::GIL_COUNT.with(|c| c.set(self.count));
-                unsafe {
-                    ffi::PyEval_RestoreThread(self.tstate);
-                }
-            }
-        }
-
+        // Use a guard pattern to handle reacquiring the GIL,
+        // so that the GIL will be reacquired even if `f` panics.
         // The `Send` bound on the closure prevents the user from
         // transferring the `Python` token into the closure.
-        let count = gil::GIL_COUNT.with(|c| c.replace(0));
-        let tstate = unsafe { ffi::PyEval_SaveThread() };
-
-        let _guard = RestoreGuard { count, tstate };
+        let _guard = unsafe { SuspendGIL::new() };
         f()
     }
 
@@ -617,6 +599,13 @@ impl<'py> Python<'py> {
     #[inline]
     pub fn None(self) -> PyObject {
         unsafe { PyObject::from_borrowed_ptr(self, ffi::Py_None()) }
+    }
+
+    /// Gets the Python builtin value `Ellipsis`, or `...`.
+    #[allow(non_snake_case)] // the Python keyword starts with uppercase
+    #[inline]
+    pub fn Ellipsis(self) -> PyObject {
+        unsafe { PyObject::from_borrowed_ptr(self, ffi::Py_Ellipsis()) }
     }
 
     /// Gets the Python builtin value `NotImplemented`.
@@ -1031,5 +1020,16 @@ mod tests {
 
         let state = unsafe { crate::ffi::PyGILState_Check() };
         assert_eq!(state, GIL_NOT_HELD);
+    }
+
+    #[test]
+    fn test_ellipsis() {
+        Python::with_gil(|py| {
+            assert_eq!(py.Ellipsis().to_string(), "Ellipsis");
+
+            let v = py.eval("...", None, None).map_err(|e| e.print(py)).unwrap();
+
+            assert!(v.eq(py.Ellipsis()).unwrap());
+        });
     }
 }

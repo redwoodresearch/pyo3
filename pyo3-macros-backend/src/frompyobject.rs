@@ -278,7 +278,6 @@ impl<'a> Container<'a> {
         let self_ty = &self.path;
         let struct_name = &self.name();
         let field_idents: Vec<_> = (0..struct_fields.len())
-            .into_iter()
             .map(|i| format_ident!("arg{}", i))
             .collect();
         let fields = struct_fields.iter().zip(&field_idents).enumerate().map(|(index, (field, ident))| {
@@ -315,8 +314,13 @@ impl<'a> Container<'a> {
                 FieldGetter::GetAttr(None) => {
                     quote!(getattr(_pyo3::intern!(obj.py(), #field_name)))
                 }
+                FieldGetter::GetItem(Some(syn::Lit::Str(key))) => {
+                    quote!(get_item(_pyo3::intern!(obj.py(), #key)))
+                }
                 FieldGetter::GetItem(Some(key)) => quote!(get_item(#key)),
-                FieldGetter::GetItem(None) => quote!(get_item(#field_name)),
+                FieldGetter::GetItem(None) => {
+                    quote!(get_item(_pyo3::intern!(obj.py(), #field_name)))
+                }
             };
             let extractor = match &field.from_py_with {
                 None => {

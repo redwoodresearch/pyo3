@@ -13,7 +13,7 @@
 
 PyO3 provides a struct [`GILOnceCell`] which works equivalently to `OnceCell` but relies solely on the Python GIL for thread safety. This means it can be used in place of `lazy_static` or `once_cell` where you are experiencing the deadlock described above. See the documentation for [`GILOnceCell`] for an example how to use it.
 
-[`GILOnceCell`]: {{#PYO3_DOCS_URL}}/pyo3/once_cell/struct.GILOnceCell.html
+[`GILOnceCell`]: {{#PYO3_DOCS_URL}}/pyo3/sync/struct.GILOnceCell.html
 
 ## I can't run `cargo test`; or I can't build in a Cargo workspace: I'm having linker issues like "Symbol not found" or "Undefined reference to _PyExc_SystemError"!
 
@@ -180,3 +180,20 @@ done with the `crate` attribute:
 #[pyo3(crate = "reexported::pyo3")]
 struct MyClass;
 ```
+
+## I'm trying to call Python from Rust but I get `STATUS_DLL_NOT_FOUND` or `STATUS_ENTRYPOINT_NOT_FOUND`!
+
+This happens on Windows when linking to the python DLL fails or the wrong one is linked. The Python DLL on Windows will usually be called something like: 
+- `python3X.dll` for Python 3.X, e.g. `python310.dll` for Python 3.10
+- `python3.dll` when using PyO3's `abi3` feature
+
+The DLL needs to be locatable using the [Windows DLL search order](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order#standard-search-order-for-unpackaged-apps). The two easiest ways to achieve this are:
+- Put the Python DLL in the same folder as your build artifacts
+- Add the directory containing the Python DLL to your `PATH` environment variable, for example `C:\Users\<You>\AppData\Local\Programs\Python\Python310`
+- If this happens when you are *distributing* your program, consider using [PyOxidizer](https://github.com/indygreg/PyOxidizer) to package it with your binary.
+
+If the wrong DLL is linked it is possible that this happened because another program added itself and its own Python DLLs to `PATH`. Rearrange your `PATH` variables to give the correct DLL priority.
+
+> **Note**: Changes to `PATH` (or any other environment variable) are not visible to existing shells. Restart it for changes to take effect.
+
+For advanced troubleshooting, [Dependency Walker](https://www.dependencywalker.com/) can be used to diagnose linking errors.

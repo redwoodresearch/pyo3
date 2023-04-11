@@ -2,6 +2,7 @@ use crate::object::*;
 use crate::pyport::Py_ssize_t;
 use std::os::raw::c_int;
 
+#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     #[cfg_attr(PyPy, link_name = "_PyPy_EllipsisObject")]
     static mut _Py_EllipsisObject: PyObject;
@@ -81,6 +82,7 @@ extern "C" {
         step: *mut Py_ssize_t,
     ) -> c_int;
 
+    #[cfg_attr(all(PyPy, Py_3_10), link_name = "PyPySlice_AdjustIndices")]
     pub fn PySlice_AdjustIndices(
         length: Py_ssize_t,
         start: *mut Py_ssize_t,

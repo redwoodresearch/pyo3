@@ -15,6 +15,9 @@ use std::{
     thread,
 };
 
+mod lazy_type_object;
+pub use lazy_type_object::LazyTypeObject;
+
 /// Gets the offset of the dictionary from the start of the object in bytes.
 #[inline]
 pub fn dict_offset<T: PyClass>() -> ffi::Py_ssize_t {
@@ -134,7 +137,7 @@ unsafe impl Sync for PyClassItems {}
 ///
 /// Users are discouraged from implementing this trait manually; it is a PyO3 implementation detail
 /// and may be changed at any time.
-pub trait PyClassImpl: Sized {
+pub trait PyClassImpl: Sized + 'static {
     /// Class doc string
     const DOC: &'static str = "\0";
 
@@ -191,6 +194,8 @@ pub trait PyClassImpl: Sized {
     fn weaklist_offset() -> Option<ffi::Py_ssize_t> {
         None
     }
+
+    fn lazy_type_object() -> &'static LazyTypeObject<Self>;
 }
 
 /// Iterator used to process all class items during type instantiation.
@@ -797,7 +802,7 @@ unsafe fn bpo_35810_workaround(_py: Python<'_>, ty: *mut ffi::PyTypeObject) {
     {
         // Must check version at runtime for abi3 wheels - they could run against a higher version
         // than the build config suggests.
-        use crate::once_cell::GILOnceCell;
+        use crate::sync::GILOnceCell;
         static IS_PYTHON_3_8: GILOnceCell<bool> = GILOnceCell::new();
 
         if *IS_PYTHON_3_8.get_or_init(_py, || _py.version_info() >= (3, 8)) {
@@ -928,19 +933,7 @@ impl<T: PyClass> PyClassBaseType for T {
 
 /// Implementation of tp_dealloc for all pyclasses
 pub(crate) unsafe extern "C" fn tp_dealloc<T: PyClass>(obj: *mut ffi::PyObject) {
-    /// A wrapper because PyCellLayout::tp_dealloc currently takes the py argument last
-    /// (which is different to the rest of the trampolines which take py first)
-    #[inline]
-    #[allow(clippy::unnecessary_wraps)]
-    unsafe fn trampoline_dealloc_wrapper<T: PyClass>(
-        py: Python<'_>,
-        slf: *mut ffi::PyObject,
-    ) -> PyResult<()> {
-        T::Layout::tp_dealloc(slf, py);
-        Ok(())
-    }
-    // TODO change argument order in PyCellLayout::tp_dealloc so this wrapper isn't needed.
-    crate::impl_::trampoline::dealloc(obj, trampoline_dealloc_wrapper::<T>)
+    crate::impl_::trampoline::dealloc(obj, T::Layout::tp_dealloc)
 }
 
 pub(crate) unsafe extern "C" fn get_sequence_item_from_mapping(

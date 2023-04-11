@@ -12,6 +12,7 @@ use syn::{
 
 use crate::{
     attributes::{kw, KeywordAttribute},
+    deprecations::{Deprecation, Deprecations},
     method::{FnArg, FnType},
     pyfunction::Argument,
 };
@@ -351,10 +352,21 @@ impl<'a> FunctionSignature<'a> {
         let mut parse_state = ParseState::Positional;
         let mut python_signature = PythonSignature::default();
 
-        let mut args_iter = arguments.iter_mut().filter(|arg| !arg.py); // Python<'_> arguments don't show on the Python side.
+        let mut args_iter = arguments.iter_mut();
 
-        let mut next_argument_checked = |name: &syn::Ident| match args_iter.next() {
-            Some(fn_arg) => {
+        let mut next_non_py_argument_checked = |name: &syn::Ident| {
+            for fn_arg in args_iter.by_ref() {
+                if fn_arg.py {
+                    // If the user incorrectly tried to include py: Python in the
+                    // signature, give a useful error as a hint.
+                    ensure_spanned!(
+                        name != fn_arg.name,
+                        name.span() => "arguments of type `Python` must not be part of the signature"
+                    );
+                    // Otherwise try next argument.
+                    continue;
+                }
+
                 ensure_spanned!(
                     name == fn_arg.name,
                     name.span() => format!(
@@ -363,17 +375,17 @@ impl<'a> FunctionSignature<'a> {
                         name.unraw(),
                     )
                 );
-                Ok(fn_arg)
+                return Ok(fn_arg);
             }
-            None => bail_spanned!(
+            bail_spanned!(
                 name.span() => "signature entry does not have a corresponding function argument"
-            ),
+            )
         };
 
         for item in &attribute.value.items {
             match item {
                 SignatureItem::Argument(arg) => {
-                    let fn_arg = next_argument_checked(&arg.ident)?;
+                    let fn_arg = next_non_py_argument_checked(&arg.ident)?;
                     parse_state.add_argument(
                         &mut python_signature,
                         arg.ident.unraw().to_string(),
@@ -388,12 +400,12 @@ impl<'a> FunctionSignature<'a> {
                     parse_state.finish_pos_args(&python_signature, sep.span())?
                 }
                 SignatureItem::Varargs(varargs) => {
-                    let fn_arg = next_argument_checked(&varargs.ident)?;
+                    let fn_arg = next_non_py_argument_checked(&varargs.ident)?;
                     fn_arg.is_varargs = true;
                     parse_state.add_varargs(&mut python_signature, &varargs)?;
                 }
                 SignatureItem::Kwargs(kwargs) => {
-                    let fn_arg = next_argument_checked(&kwargs.ident)?;
+                    let fn_arg = next_non_py_argument_checked(&kwargs.ident)?;
                     fn_arg.is_kwargs = true;
                     parse_state.add_kwargs(&mut python_signature, &kwargs)?;
                 }
@@ -403,7 +415,8 @@ impl<'a> FunctionSignature<'a> {
             };
         }
 
-        if let Some(arg) = args_iter.next() {
+        // Ensure no non-py arguments remain
+        if let Some(arg) = args_iter.find(|arg| !arg.py) {
             bail_spanned!(
                 attribute.kw.span() => format!("missing signature entry for argument `{}`", arg.name)
             );
@@ -530,7 +543,7 @@ impl<'a> FunctionSignature<'a> {
     }
 
     /// Without `#[pyo3(signature)]` or `#[args]` - just take the Rust function arguments as positional.
-    pub fn from_arguments(mut arguments: Vec<FnArg<'a>>) -> Self {
+    pub fn from_arguments(mut arguments: Vec<FnArg<'a>>, deprecations: &mut Deprecations) -> Self {
         let mut python_signature = PythonSignature::default();
         for arg in &arguments {
             // Python<'_> arguments don't show in Python signature
@@ -540,6 +553,13 @@ impl<'a> FunctionSignature<'a> {
 
             if arg.optional.is_none() {
                 // This argument is required
+                if python_signature.required_positional_parameters
+                    != python_signature.positional_parameters.len()
+                {
+                    // A previous argument was not required
+                    deprecations.push(Deprecation::RequiredArgumentAfterOption, arg.name.span());
+                }
+
                 python_signature.required_positional_parameters =
                     python_signature.positional_parameters.len() + 1;
             }
@@ -563,6 +583,29 @@ impl<'a> FunctionSignature<'a> {
             python_signature,
             attribute: None,
         }
+    }
+
+    fn default_value_for_parameter(&self, parameter: &str) -> String {
+        let mut default = "...".to_string();
+        if let Some(fn_arg) = self.arguments.iter().find(|arg| arg.name == parameter) {
+            if let Some(syn::Expr::Lit(syn::ExprLit { lit, .. })) = fn_arg.default.as_ref() {
+                match lit {
+                    syn::Lit::Str(s) => default = s.token().to_string(),
+                    syn::Lit::Char(c) => default = c.token().to_string(),
+                    syn::Lit::Int(i) => default = i.base10_digits().to_string(),
+                    syn::Lit::Float(f) => default = f.base10_digits().to_string(),
+                    syn::Lit::Bool(b) => {
+                        default = if b.value() {
+                            "True".to_string()
+                        } else {
+                            "False".to_string()
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        default
     }
 
     pub fn text_signature(&self, fn_type: &FnType) -> String {
@@ -604,8 +647,8 @@ impl<'a> FunctionSignature<'a> {
             output.push_str(parameter);
 
             if i >= py_sig.required_positional_parameters {
-                // has a default, just use ... for now
-                output.push_str("=...");
+                output.push('=');
+                output.push_str(&self.default_value_for_parameter(parameter));
             }
 
             if py_sig.positional_only_parameters > 0 && i + 1 == py_sig.positional_only_parameters {
@@ -626,8 +669,8 @@ impl<'a> FunctionSignature<'a> {
             maybe_push_comma(&mut output);
             output.push_str(parameter);
             if !required {
-                // has a default, just use ... for now
-                output.push_str("=...")
+                output.push('=');
+                output.push_str(&self.default_value_for_parameter(parameter));
             }
         }
 
